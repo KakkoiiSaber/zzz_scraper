@@ -446,4 +446,9 @@ def main(argv: List[str] | None = None) -> int:
         return 1
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # sys.exit(main())
+
+    run_batch_from_csv(
+        Path("metafiles/米游社-官方资讯-minas.csv"),
+        Path("./downloads")
+    )

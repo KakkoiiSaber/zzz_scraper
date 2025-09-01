@@ -7,6 +7,8 @@ import json
 import re
 
 from bs4 import BeautifulSoup
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # for src/
 
 # Robust imports so it works when run as a package or module
 try:
@@ -81,6 +83,7 @@ class MinasScraper(BaseScraper):
         if not self.source_csv.exists():
             raise FileNotFoundError(f"posts CSV not found: {self.source_csv}")
 
+
         # load existing results to merge/skip
         existing_map = self._load_existing_map(self.out_csv)
 
@@ -94,6 +97,10 @@ class MinasScraper(BaseScraper):
                     "post_name": (r.get("post_name") or "").strip(),
                     "post_url":  (r.get("post_url")  or "").strip(),
                 })
+
+        # stop_on_seen: if True, stop processing after first seen (cached) entry
+        stop_on_seen = bool(self.task.get("stop_on_seen", False))
+        seen_cached = False
 
         results: List[Dict[str, str]] = []
         total = len(rows)
@@ -113,6 +120,9 @@ class MinasScraper(BaseScraper):
             if cached.get("minas_link") and cached.get("minas_pwd"):
                 results.append(self._merge_cached(row, cached))
                 self.log.info(f"[{idx}/{total}] skip (cached): {row.get('post_time','')} | {row.get('post_name','')}")
+                if stop_on_seen:
+                    seen_cached = True
+                    break
                 continue
 
             self.log.info(f"[{idx}/{total}] check: {row.get('post_time','')} | {row.get('post_name','')} | {url}")
@@ -315,20 +325,27 @@ class MinasScraper(BaseScraper):
         self.out_csv.parent.mkdir(parents=True, exist_ok=True)
         fieldnames = ["post_time", "post_name", "post_url", "minas_link", "minas_pwd"]
 
-        # de-dup by URL, prefer later rows (newer scrape) over earlier cached
-        by_url: Dict[str, Dict[str, str]] = {}
-        for r in rows:
-            u = (r.get("post_url") or "").strip()
-            if not u:
-                continue
-            prev = by_url.get(u, {k: "" for k in fieldnames})
-            merged = {**prev, **{k: r.get(k, "") for k in fieldnames}}
-            by_url[u] = merged
+        # Load existing rows
+        existing: List[Dict[str, str]] = []
+        if self.out_csv.exists():
+            try:
+                with open(self.out_csv, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for r in reader:
+                        existing.append({k: r.get(k, "") for k in fieldnames})
+            except Exception:
+                pass
 
-        merged_rows = list(by_url.values())
+        # De-dup by URL: new rows first, then existing rows not in new
+        new_urls = {(r.get("post_url") or "").strip() for r in rows if (r.get("post_url") or "").strip()}
+        merged_rows = rows + [r for r in existing if (r.get("post_url") or "").strip() not in new_urls]
+
         with open(self.out_csv, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader()
             for r in merged_rows:
                 w.writerow({k: r.get(k, "") for k in fieldnames})
         self.log.info(f"wrote CSV: {self.out_csv} (rows: {len(merged_rows)})")
+
+if __name__ == "__main__":
+    MinasScraper("米游社-官方资讯-minas").run()

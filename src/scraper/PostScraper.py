@@ -11,6 +11,8 @@ import csv
 
 
 from bs4 import BeautifulSoup
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # for src/
 
 # Optional: requests_html for JS-rendered pages
 HTMLSession = None  # type: ignore
@@ -642,21 +644,24 @@ class PostScraper(BaseScraper):
             u = (r.get("post_url") or "").strip()
             if u:
                 by_url[u] = r
+        new_rows: List[Dict[str, str]] = []
         for r in rows:
             u = (r.get("post_url") or "").strip()
             if not u:
                 continue
             if u not in by_url:
                 by_url[u] = {k: r.get(k, "") for k in fieldnames}
+                new_rows.append({k: r.get(k, "") for k in fieldnames})
 
-        merged = list(by_url.values())
+        # Place new rows on top, then the rest (excluding duplicates)
+        merged = new_rows + [r for r in existing if (r.get("post_url") or "").strip() not in {row["post_url"] for row in new_rows}]
 
         with open(out_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for r in merged:
                 writer.writerow({k: r.get(k, "") for k in fieldnames})
-        self.log.info(f"wrote CSV: {out_path} (added {len(merged) - len(existing)} new, total {len(merged)})")
+        self.log.info(f"wrote CSV: {out_path} (added {len(new_rows)} new, total {len(merged)})")
     def _extract_mihoyo_official_news_api(self, existing_urls: Set[str]) -> List[Dict[str, str]]:
         """Use the official JSON endpoint observed in DevTools to page news quickly.
         Defaults are tuned for zzz.mihoyo.com based on provided network capture.
@@ -720,3 +725,7 @@ class PostScraper(BaseScraper):
         for r in out:
             uniq[r["post_url"]] = r
         return list(uniq.values())
+    
+if __name__ == "__main__":
+    PostScraper("米游社-官方资讯").run()
+    PostScraper("官网-新闻资讯").run()
