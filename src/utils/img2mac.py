@@ -35,6 +35,6 @@ def resize_and_pad(input_path):
 	print(f"Saved: {out_path}")
 
 if __name__ == "__main__":
-    file_path = "downloads/米游社-官方资讯-minas/2025.09.01 《绝区零》2025年9月月历壁纸/9月月历壁纸_PC版.jpg"
+    file_path = "downloads/米游社-官方资讯-minas/2025.10.01 《绝区零》2025年10月月历壁纸/10月月历壁纸_PC版.jpg"
     resize_and_pad(file_path)
 
