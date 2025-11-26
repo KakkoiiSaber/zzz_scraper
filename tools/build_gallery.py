@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-Build a static gallery page from files under downloads/.
+Build a lightweight gallery for GitHub Pages:
+ - Scans downloads/ for images (newest first)
+ - Generates compressed previews (~100 KB max each) in docs/thumbs/
+ - Writes docs/meta.json with preview/original info
+ - Writes docs/index.html that fetches meta.json client-side and renders cards
 
-Outputs: docs/index.html
-Environment overrides:
+Env overrides:
   GALLERY_DOWNLOADS   root folder to scan (default: downloads)
   GALLERY_TITLE       page title (default: Downloads Gallery)
+  GALLERY_MAX_BYTES   max preview size in bytes (default: 100000)
 """
 from __future__ import annotations
 
 import html
+import io
+import json
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -18,52 +24,90 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 DOWNLOAD_ROOT = Path(os.getenv("GALLERY_DOWNLOADS", "downloads"))
 DOCS_DIR = Path("docs")
 OUT_FILE = DOCS_DIR / "index.html"
+META_FILE = DOCS_DIR / "meta.json"
 TITLE = os.getenv("GALLERY_TITLE", "Downloads Gallery")
+THUMB_DIR = DOCS_DIR / "thumbs"
+MAX_BYTES = int(os.getenv("GALLERY_MAX_BYTES", "100000"))
 
 
 def find_images() -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     if not DOWNLOAD_ROOT.exists():
         return items
-    for path in sorted(DOWNLOAD_ROOT.rglob("*")):
+    for path in DOWNLOAD_ROOT.rglob("*"):
         if not path.is_file():
             continue
         if path.suffix.lower() not in IMG_EXTS:
             continue
         rel_from_root = path.relative_to(Path("."))
-        # docs/ is the site root; use ../ to reach repository root
         web_path = "../" + quote(str(rel_from_root).replace("\\", "/"), safe="/")
         folder = str(path.parent.relative_to(DOWNLOAD_ROOT)).replace("\\", "/")
+        stat = path.stat()
         items.append(
             {
-                "src": web_path,
-                "name": path.stem,
+                "src": web_path,  # original path (likely LFS; may 404 on Pages)
+                "fs_path": str(path),
                 "folder": folder if folder != "." else "",
+                "name": path.stem,
+                "mtime": stat.st_mtime,
             }
         )
-    return items
+    # newest first
+    return sorted(items, key=lambda x: x["mtime"], reverse=True)
 
 
-def render(items: list[dict[str, str]]) -> str:
-    cards = []
-    for item in items:
-        name = html.escape(item["name"])
-        folder = html.escape(item["folder"] or "/")
-        src = html.escape(item["src"])
-        cards.append(
-            f"""
-      <article class="card">
-        <img loading="lazy" src="{src}" alt="{name}" />
-        <div class="meta">
-          <div class="folder">{folder}</div>
-          <div class="name">{name}</div>
-        </div>
-      </article>
-            """.strip()
+def build_previews(items: list[dict[str, str]]) -> None:
+    try:
+        from PIL import Image
+    except Exception as e:
+        print(f"[gallery] Pillow not available, skipping previews: {e}")
+        return
+
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    for it in items:
+        src_path = Path(it["fs_path"])
+        rel = src_path.relative_to(DOWNLOAD_ROOT)
+        preview_path = THUMB_DIR / rel.with_suffix(".jpg")
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with Image.open(src_path) as img:
+                img = img.convert("RGB")
+                best_bytes = None
+                for q in range(85, 24, -5):
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=q, optimize=True)
+                    best_bytes = buf.getvalue()
+                    if buf.tell() <= MAX_BYTES:
+                        break
+                if best_bytes is None:
+                    it["thumb"] = None
+                    continue
+                preview_path.write_bytes(best_bytes)
+                it["thumb"] = str(preview_path.relative_to(DOCS_DIR)).replace("\\", "/")
+        except Exception as e:
+            print(f"[gallery] preview failed for {src_path}: {e}")
+            it["thumb"] = None
+
+
+def write_meta(items: list[dict[str, str]]) -> None:
+    payload = []
+    for it in items:
+        thumb = it.get("thumb") or it["src"]  # fall back to original if no preview
+        payload.append(
+            {
+                "thumb": thumb,
+                "full": thumb,  # originals often 404 on Pages; serve preview
+                "name": it["name"],
+                "folder": it["folder"],
+                "mtime": it["mtime"],
+            }
         )
+    META_FILE.write_text(json.dumps({"items": payload}, ensure_ascii=False), encoding="utf-8")
+    print(f"[gallery] Wrote {META_FILE} with {len(payload)} entries")
 
-    card_html = "\n".join(cards) if cards else '<p class="empty">No images found in downloads/.</p>'
 
+def render_base(count: int) -> str:
+    # minimal shell; cards are injected via meta.json
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +121,6 @@ def render(items: list[dict[str, str]]) -> str:
       --border: #1c2737;
       --text: #e7ecf4;
       --muted: #9fb4ce;
-      --accent: #7ed0ff;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -90,7 +133,6 @@ def render(items: list[dict[str, str]]) -> str:
       padding: 16px 20px;
       font-weight: 600;
       font-size: 18px;
-      letter-spacing: 0.2px;
     }}
     header .count {{ color: var(--muted); font-weight: 400; margin-left: 8px; }}
     .grid {{
@@ -115,31 +157,60 @@ def render(items: list[dict[str, str]]) -> str:
       width: 100%;
       height: auto;
     }}
-    .meta {{
-      padding: 10px 12px 12px;
-      font-size: 12px;
-      line-height: 1.4;
-      color: var(--muted);
-    }}
-    .folder {{ color: var(--accent); word-break: break-all; }}
-    .name {{ margin-top: 4px; color: var(--text); word-break: break-word; }}
     .empty {{ padding: 18px; color: var(--muted); }}
   </style>
 </head>
 <body>
-  <header>{html.escape(TITLE)}<span class="count">{len(items)} images</span></header>
-  <section class="grid">
-{card_html}
+  <header>{html.escape(TITLE)}<span class="count">{count} images</span></header>
+  <section class="grid" id="grid">
+    <p class="empty" id="loading">Loading…</p>
   </section>
+  <script>
+    async function load() {{
+      const grid = document.getElementById('grid');
+      const loading = document.getElementById('loading');
+      try {{
+        const res = await fetch('meta.json?_=' + Date.now());
+        const data = await res.json();
+        const items = data.items || [];
+        const countEl = document.querySelector('.count');
+        countEl.textContent = items.length + ' images';
+        if (loading) loading.remove();
+        const frag = document.createDocumentFragment();
+        for (const it of items) {{
+          const art = document.createElement('article');
+          art.className = 'card';
+          const a = document.createElement('a');
+          a.href = it.full;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.src = it.thumb;
+          img.alt = '';
+          a.appendChild(img);
+          art.appendChild(a);
+          frag.appendChild(art);
+        }}
+        grid.innerHTML = '';
+        grid.appendChild(frag);
+      }} catch (e) {{
+        if (loading) loading.textContent = 'Failed to load gallery.';
+        console.error(e);
+      }}
+    }}
+    load();
+  </script>
 </body>
 </html>"""
 
 
 def main() -> None:
     items = find_images()
+    build_previews(items)
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    html_out = render(items)
-    OUT_FILE.write_text(html_out, encoding="utf-8")
+    write_meta(items)
+    OUT_FILE.write_text(render_base(len(items)), encoding="utf-8")
     print(f"[gallery] Wrote {OUT_FILE} with {len(items)} image(s)")
 
 
