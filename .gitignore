@@ -1,5 +1,5 @@
 .venv
-downloads
+# downloads
 .DS_store
 *.pyc
 archived
