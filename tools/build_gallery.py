@@ -57,8 +57,8 @@ def find_images() -> list[dict[str, str]]:
                 "cache_key": cache_key,
             }
         )
-    # newest first
-    return sorted(items, key=lambda x: x["mtime"], reverse=True)
+    # preserve discovery order (no sorting)
+    return items
 
 
 def build_previews(items: list[dict[str, str]]) -> None:
