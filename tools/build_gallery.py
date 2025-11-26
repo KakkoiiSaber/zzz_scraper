@@ -23,8 +23,8 @@ from urllib.parse import quote
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 DOWNLOAD_ROOT = Path(os.getenv("GALLERY_DOWNLOADS", "downloads"))
 DOCS_DIR = Path("docs")
-OUT_FILE = DOCS_DIR / "index.html"
 META_FILE = DOCS_DIR / "meta.json"
+CACHE_FILE = DOCS_DIR / "cached.json"
 TITLE = os.getenv("GALLERY_TITLE", "Downloads Gallery")
 THUMB_DIR = DOCS_DIR / "thumbs"
 MAX_BYTES = int(os.getenv("GALLERY_MAX_BYTES", "100000"))
@@ -34,6 +34,7 @@ def find_images() -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     if not DOWNLOAD_ROOT.exists():
         return items
+    cache = load_cache()
     for path in DOWNLOAD_ROOT.rglob("*"):
         if not path.is_file():
             continue
@@ -43,6 +44,8 @@ def find_images() -> list[dict[str, str]]:
         web_path = "../" + quote(str(rel_from_root).replace("\\", "/"), safe="/")
         folder = str(path.parent.relative_to(DOWNLOAD_ROOT)).replace("\\", "/")
         stat = path.stat()
+        cache_key = str(path)
+        cached = cache.get(cache_key)
         items.append(
             {
                 "src": web_path,  # original path (likely LFS; may 404 on Pages)
@@ -50,6 +53,8 @@ def find_images() -> list[dict[str, str]]:
                 "folder": folder if folder != "." else "",
                 "name": path.stem,
                 "mtime": stat.st_mtime,
+                "cached_thumb": cached["thumb"] if cached and cached.get("mtime") == stat.st_mtime else None,
+                "cache_key": cache_key,
             }
         )
     # newest first
@@ -65,6 +70,11 @@ def build_previews(items: list[dict[str, str]]) -> None:
 
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     for it in items:
+        # reuse cached thumbnail if unchanged
+        if it.get("cached_thumb"):
+            it["thumb"] = it["cached_thumb"]
+            continue
+
         src_path = Path(it["fs_path"])
         rel = src_path.relative_to(DOWNLOAD_ROOT)
         preview_path = THUMB_DIR / rel.with_suffix(".jpg")
@@ -106,6 +116,24 @@ def write_meta(items: list[dict[str, str]]) -> None:
     print(f"[gallery] Wrote {META_FILE} with {len(payload)} entries")
 
 
+def load_cache() -> dict:
+    if not CACHE_FILE.exists():
+        return {}
+    try:
+        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_cache(items: list[dict[str, str]]) -> None:
+    data = {}
+    for it in items:
+        if it.get("thumb"):
+            data[it["cache_key"]] = {"thumb": it["thumb"], "mtime": it["mtime"]}
+    CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    print(f"[gallery] Wrote cache for {len(data)} items -> {CACHE_FILE}")
+
+
 def render_base(count: int) -> str:
     # minimal shell; cards are injected via meta.json
     return f"""<!doctype html>
@@ -136,16 +164,20 @@ def render_base(count: int) -> str:
     }}
     header .count {{ color: var(--muted); font-weight: 400; margin-left: 8px; }}
     .grid {{
-      column-count: 4;
-      column-gap: 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-auto-rows: 10px;
+      grid-auto-flow: dense;
+      gap: 12px;
       padding: 0 16px 32px;
     }}
-    @media (max-width: 1200px) {{ .grid {{ column-count: 3; }} }}
-    @media (max-width: 900px) {{ .grid {{ column-count: 2; }} }}
-    @media (max-width: 640px) {{ .grid {{ column-count: 1; }} }}
+    @media (max-width: 900px) {{
+      .grid {{ grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }}
+    }}
+    @media (max-width: 640px) {{
+      .grid {{ grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }}
+    }}
     .card {{
-      break-inside: avoid;
-      margin-bottom: 12px;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -158,6 +190,23 @@ def render_base(count: int) -> str:
       height: auto;
     }}
     .empty {{ padding: 18px; color: var(--muted); }}
+    .pager {{
+      text-align: center;
+      padding: 12px 0 20px;
+    }}
+    .load-more {{
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-weight: 600;
+    }}
+    .load-more:disabled {{
+      opacity: 0.4;
+      cursor: default;
+    }}
   </style>
 </head>
 <body>
@@ -165,41 +214,84 @@ def render_base(count: int) -> str:
   <section class="grid" id="grid">
     <p class="empty" id="loading">Loading…</p>
   </section>
+  <div class="pager">
+    <button class="load-more" id="loadMore" disabled>Load more</button>
+  </div>
   <script>
+    const PAGE_SIZE = 60;
+    let items = [];
+    let cursor = 0;
+    const gridEl = document.getElementById('grid');
+
+    function setSpan(card, img) {{
+      const styles = window.getComputedStyle(gridEl);
+      const rowHeight = parseFloat(styles.gridAutoRows) || 10;
+      const rowGap = parseFloat(styles.rowGap || styles.gap) || 0;
+      const cardWidth = card.getBoundingClientRect().width || 260;
+      const ratio = img.naturalHeight && img.naturalWidth ? (img.naturalHeight / img.naturalWidth) : 1;
+      const height = cardWidth * ratio;
+      const span = Math.max(1, Math.ceil((height + rowGap) / (rowHeight + rowGap)));
+      card.style.gridRowEnd = `span ${span}`;
+    }}
+
+    function renderMore() {{
+      const grid = gridEl;
+      if (!items.length) return;
+      const end = Math.min(cursor + PAGE_SIZE, items.length);
+      const frag = document.createDocumentFragment();
+      for (let i = cursor; i < end; i++) {{
+        const it = items[i];
+        const art = document.createElement('article');
+        art.className = 'card';
+        const a = document.createElement('a');
+        a.href = it.full;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        const img = document.createElement('img');
+        img.loading = 'lazy';
+        img.src = it.thumb;
+        img.alt = '';
+        img.addEventListener('load', () => setSpan(art, img));
+        a.appendChild(img);
+        art.appendChild(a);
+        frag.appendChild(art);
+      }}
+      if (cursor === 0) grid.innerHTML = '';
+      grid.appendChild(frag);
+      cursor = end;
+      const btn = document.getElementById('loadMore');
+      if (cursor >= items.length) {{
+        btn.disabled = true;
+        btn.textContent = 'All loaded';
+      }} else {{
+        btn.disabled = false;
+        btn.textContent = 'Load more (' + cursor + '/' + items.length + ')';
+      }}
+    }}
+
     async function load() {{
       const grid = document.getElementById('grid');
       const loading = document.getElementById('loading');
+      const btn = document.getElementById('loadMore');
       try {{
         const res = await fetch('meta.json?_=' + Date.now());
         const data = await res.json();
-        const items = data.items || [];
+        items = data.items || [];
         const countEl = document.querySelector('.count');
         countEl.textContent = items.length + ' images';
         if (loading) loading.remove();
-        const frag = document.createDocumentFragment();
-        for (const it of items) {{
-          const art = document.createElement('article');
-          art.className = 'card';
-          const a = document.createElement('a');
-          a.href = it.full;
-          a.target = '_blank';
-          a.rel = 'noopener';
-          const img = document.createElement('img');
-          img.loading = 'lazy';
-          img.src = it.thumb;
-          img.alt = '';
-          a.appendChild(img);
-          art.appendChild(a);
-          frag.appendChild(art);
-        }}
-        grid.innerHTML = '';
-        grid.appendChild(frag);
+        btn.disabled = false;
+        renderMore();
       }} catch (e) {{
         if (loading) loading.textContent = 'Failed to load gallery.';
         console.error(e);
       }}
     }}
     load();
+
+    document.getElementById('loadMore').addEventListener('click', () => {{
+      renderMore();
+    }});
   </script>
 </body>
 </html>"""
@@ -210,8 +302,8 @@ def main() -> None:
     build_previews(items)
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     write_meta(items)
-    OUT_FILE.write_text(render_base(len(items)), encoding="utf-8")
-    print(f"[gallery] Wrote {OUT_FILE} with {len(items)} image(s)")
+    save_cache(items)
+    print(f"[gallery] Previews + meta ready for manual index (items: {len(items)})")
 
 
 if __name__ == "__main__":
