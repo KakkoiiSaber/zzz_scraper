@@ -18,6 +18,8 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+from datetime import datetime
 from urllib.parse import quote
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
@@ -28,6 +30,21 @@ CACHE_FILE = DOCS_DIR / "cached.json"
 TITLE = os.getenv("GALLERY_TITLE", "Downloads Gallery")
 THUMB_DIR = DOCS_DIR / "thumbs"
 MAX_BYTES = int(os.getenv("GALLERY_MAX_BYTES", "100000"))
+
+
+def _date_from_folder(folder: str, mtime: float) -> float:
+    """
+    Try to parse a leading date in folder name like YYYY.MM.DD.
+    Return a sortable timestamp (seconds). Fallback to mtime.
+    """
+    m = re.match(r"(\d{4})[.\-](\d{2})[.\-](\d{2})", folder)
+    if not m:
+        return mtime
+    try:
+        dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return dt.timestamp()
+    except Exception:
+        return mtime
 
 
 def find_images() -> list[dict[str, str]]:
@@ -46,6 +63,7 @@ def find_images() -> list[dict[str, str]]:
         stat = path.stat()
         cache_key = str(path)
         cached = cache.get(cache_key)
+        folder_name = folder if folder else ""
         items.append(
             {
                 "src": web_path,  # original path (likely LFS; may 404 on Pages)
@@ -53,12 +71,13 @@ def find_images() -> list[dict[str, str]]:
                 "folder": folder if folder != "." else "",
                 "name": path.stem,
                 "mtime": stat.st_mtime,
+                "date_sort": _date_from_folder(folder_name, stat.st_mtime),
                 "cached_thumb": cached["thumb"] if cached and cached.get("mtime") == stat.st_mtime else None,
                 "cache_key": cache_key,
             }
         )
-    # preserve discovery order (no sorting)
-    return items
+    # newest first by folder date (if present), then mtime
+    return sorted(items, key=lambda x: x["date_sort"], reverse=True)
 
 
 def build_previews(items: list[dict[str, str]]) -> None:
