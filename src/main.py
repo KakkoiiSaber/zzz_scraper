@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from src.scraper.PostScraper import PostScraper
-from src.scraper.MinasScraper import MinasScraper
-from src.downloader.MinasDownloader import run_batch_from_csv
+from scraper.PostScraper import PostScraper
+from scraper.MinasScraper import MinasScraper
+from downloader.MinasDownloader import run_batch_from_csv
 
 
 PostScraper("米游社-官方资讯").run()
