@@ -28,12 +28,14 @@
     .grid {
       display: flex;
       flex-wrap: wrap;
+      align-items: flex-start;
       gap: 12px;
       padding: 0 16px 32px;
     }
     .card {
       flex: 1 1 240px;
       max-width: calc(25% - 12px);
+      height: auto;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -51,23 +53,6 @@
       width: 100%;
       height: auto;
     }
-    .pager {
-      text-align: center;
-      padding: 0 0 20px;
-    }
-    .load-more {
-      background: var(--card);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 16px;
-      cursor: pointer;
-      font-weight: 600;
-    }
-    .load-more:disabled {
-      opacity: 0.4;
-      cursor: default;
-    }
     .empty { padding: 18px; color: var(--muted); text-align: center; }
   </style>
 </head>
@@ -76,15 +61,12 @@
   <section class="grid" id="grid">
     <p class="empty" id="loading">Loading…</p>
   </section>
-  <div class="pager">
-    <button class="load-more" id="loadMore" disabled>Load more</button>
-  </div>
+  <div id="sentinel" style="height: 1px;"></div>
   <script>
     const PAGE_SIZE = 60;
     let items = [];
     let cursor = 0;
     const gridEl = document.getElementById('grid');
-    const btnEl = document.getElementById('loadMore');
 
     function renderMore() {
       if (!items.length) return;
@@ -109,13 +91,6 @@
       if (cursor === 0) gridEl.innerHTML = '';
       gridEl.appendChild(frag);
       cursor = end;
-      if (cursor >= items.length) {
-        btnEl.disabled = true;
-        btnEl.textContent = 'All loaded';
-      } else {
-        btnEl.disabled = false;
-        btnEl.textContent = `Load more (${cursor}/${items.length})`;
-      }
     }
 
     async function load() {
@@ -126,7 +101,6 @@
         items = data.items || [];
         document.querySelector('.count').textContent = `${items.length} images`;
         if (loading) loading.remove();
-        btnEl.disabled = false;
         renderMore();
       } catch (e) {
         if (loading) loading.textContent = 'Failed to load gallery.';
@@ -134,7 +108,16 @@
       }
     }
 
-    btnEl.addEventListener('click', renderMore);
+    const sentinel = document.getElementById('sentinel');
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          renderMore();
+        }
+      });
+    }, {rootMargin: '200px'});
+    observer.observe(sentinel);
+
     load();
   </script>
 </body>
