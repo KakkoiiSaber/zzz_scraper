@@ -6,3 +6,4 @@ pandas
 selenium
 yt-dlp
 playwright
+pillow
