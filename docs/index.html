@@ -77,9 +77,7 @@
         const art = document.createElement('article');
         art.className = 'card';
         const a = document.createElement('a');
-        a.href = it.full || it.thumb;
-        a.target = '_blank';
-        a.rel = 'noopener';
+        a.href = `detail.html?i=${i}`;
         const img = document.createElement('img');
         img.loading = 'lazy';
         img.src = it.thumb;
