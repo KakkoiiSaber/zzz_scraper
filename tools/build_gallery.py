@@ -10,7 +10,6 @@ Environment overrides:
 from __future__ import annotations
 
 import html
-import io
 import os
 from pathlib import Path
 from urllib.parse import quote
@@ -20,8 +19,6 @@ DOWNLOAD_ROOT = Path(os.getenv("GALLERY_DOWNLOADS", "downloads"))
 DOCS_DIR = Path("docs")
 OUT_FILE = DOCS_DIR / "index.html"
 TITLE = os.getenv("GALLERY_TITLE", "Downloads Gallery")
-THUMB_DIR = DOCS_DIR / "thumbs"
-MAX_BYTES = int(os.getenv("GALLERY_MAX_BYTES", "100000"))  # compress each preview under this size (bytes)
 
 
 def find_images() -> list[dict[str, str]]:
@@ -42,46 +39,9 @@ def find_images() -> list[dict[str, str]]:
                 "src": web_path,
                 "name": path.stem,
                 "folder": folder if folder != "." else "",
-                "fs_path": str(path),
-                "mtime": path.stat().st_mtime,
             }
         )
     return items
-
-
-def build_previews(items: list[dict[str, str]]) -> None:
-    try:
-        from PIL import Image
-    except Exception as e:
-        print(f"[gallery] Pillow not available, skipping previews: {e}")
-        return
-
-    THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    for it in items:
-        src_path = Path(it["fs_path"])
-        rel = src_path.relative_to(DOWNLOAD_ROOT)
-        preview_path = THUMB_DIR / rel.with_suffix(".jpg")
-        preview_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with Image.open(src_path) as img:
-                img = img.convert("RGB")
-                # Compress until under MAX_BYTES, lowering quality stepwise
-                preview_bytes = None
-                for q in range(85, 24, -5):
-                    buf = io.BytesIO()
-                    img.save(buf, format="JPEG", quality=q, optimize=True)
-                    if buf.tell() <= MAX_BYTES:
-                        preview_bytes = buf.getvalue()
-                        break
-                    preview_bytes = buf.getvalue()
-                if preview_bytes is None:
-                    it["thumb"] = None
-                    continue
-                preview_path.write_bytes(preview_bytes)
-                it["thumb"] = str(preview_path.relative_to(DOCS_DIR)).replace("\\", "/")
-        except Exception as e:
-            print(f"[gallery] preview failed for {src_path}: {e}")
-            it["thumb"] = None
 
 
 def render(items: list[dict[str, str]]) -> str:
@@ -89,15 +49,11 @@ def render(items: list[dict[str, str]]) -> str:
     for item in items:
         name = html.escape(item["name"])
         folder = html.escape(item["folder"] or "/")
-        thumb = item.get("thumb")
-        img_src = html.escape(thumb if thumb else item["src"])
-        full_src = html.escape(item["src"])
+        src = html.escape(item["src"])
         cards.append(
             f"""
       <article class="card">
-        <a href="{full_src}" target="_blank" rel="noopener">
-          <img loading="lazy" src="{img_src}" alt="{name}" />
-        </a>
+        <img loading="lazy" src="{src}" alt="{name}" />
         <div class="meta">
           <div class="folder">{folder}</div>
           <div class="name">{name}</div>
@@ -181,9 +137,6 @@ def render(items: list[dict[str, str]]) -> str:
 
 def main() -> None:
     items = find_images()
-    # newest first
-    items = sorted(items, key=lambda x: x.get("mtime", 0), reverse=True)
-    build_previews(items)
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     html_out = render(items)
     OUT_FILE.write_text(html_out, encoding="utf-8")
