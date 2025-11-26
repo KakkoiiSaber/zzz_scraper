@@ -37,6 +37,9 @@ jobs:
       - name: Run scraper
         run: python src/main.py
 
+      - name: Build gallery page
+        run: python tools/build_gallery.py
+
       - name: Show git status (UTF-8 paths)
         run: |
           git config --local core.quotePath false
