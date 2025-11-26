@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Image Detail</title>
+  <style>
+    :root {
+      --bg: #0a0d12;
+      --card: #111826;
+      --border: #1c2737;
+      --text: #e7ecf4;
+      --muted: #9fb4ce;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+      padding: 16px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.28);
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      margin: 0 auto 12px;
+    }
+    .meta {
+      font-size: 14px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    a { color: var(--muted); }
+    a:hover { color: var(--text); }
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .btn {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .btn:hover { border-color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="container" id="container">
+    <div class="actions">
+      <a class="btn" href="index.html">← Back to gallery</a>
+      <a class="btn" id="fullLink" href="#" target="_blank" rel="noopener">Open original</a>
+    </div>
+    <img id="img" alt="" />
+    <div class="meta" id="meta"></div>
+  </div>
+  <script>
+    function getIndex() {
+      const params = new URLSearchParams(window.location.search);
+      const i = parseInt(params.get('i') || '-1', 10);
+      return isNaN(i) ? -1 : i;
+    }
+
+    async function load() {
+      const idx = getIndex();
+      const imgEl = document.getElementById('img');
+      const metaEl = document.getElementById('meta');
+      const linkEl = document.getElementById('fullLink');
+      if (idx < 0) {
+        metaEl.textContent = 'Invalid image index.';
+        return;
+      }
+      try {
+        const res = await fetch('meta.json?_=' + Date.now());
+        const data = await res.json();
+        const items = data.items || [];
+        if (idx >= items.length) {
+          metaEl.textContent = 'Image not found.';
+          return;
+        }
+        const it = items[idx];
+        const full = it.full || it.thumb;
+        imgEl.src = it.thumb;
+        linkEl.href = full;
+        linkEl.textContent = full;
+        metaEl.textContent = it.name || '';
+      } catch (e) {
+        metaEl.textContent = 'Failed to load image.';
+        console.error(e);
+      }
+    }
+    load();
+  </script>
+</body>
+</html>
