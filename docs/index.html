@@ -6,7 +6,7 @@
   <title>Downloads Gallery</title>
   <style>
     :root {
-      --bg: #ffffff;
+      --bg: #0a0d12;
       --card: #111826;
       --border: #1c2737;
       --text: #e7ecf4;
@@ -24,14 +24,14 @@
       font-weight: 600;
       font-size: 18px;
     }
-    header .count { color: var(--muted); font-weight: 400; margin-left: 8px; }
+    header .count { color: var(--muted); font-weight: 400; margin-left: 12px; }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
       grid-auto-rows: 4px;
       grid-auto-flow: dense;
       gap: 12px;
-      padding: 0 16px 32px;
+      padding: 0 12px 32px;
     }
     @media (max-width: 900px) {
       .grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
@@ -42,13 +42,14 @@
     .card {
       background: transparent;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
     }
     .card img {
       display: block;
       width: 100%;
       height: auto;
+      border-radius: inherit;
     }
     .empty { padding: 18px; color: var(--muted); text-align: center; }
   </style>
@@ -69,7 +70,9 @@
       const styles = window.getComputedStyle(gridEl);
       const rowHeight = parseFloat(styles.gridAutoRows) || 4;
       const rowGap = parseFloat(styles.rowGap || styles.gap) || 0;
-      const height = img.getBoundingClientRect().height || (img.naturalHeight || 0);
+      const ratio = (img.naturalHeight && img.naturalWidth) ? (img.naturalHeight / img.naturalWidth) : 1;
+      const width = card.getBoundingClientRect().width || (img.naturalWidth || 340);
+      const height = width * ratio;
       const span = Math.max(1, Math.ceil((height + rowGap) / (rowHeight + rowGap)));
       card.style.gridRowEnd = `span ${span}`;
     }
