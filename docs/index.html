@@ -20,22 +20,26 @@
       font-family: "Segoe UI", "Noto Sans SC", system-ui, -apple-system, sans-serif;
     }
     header {
-      padding: 16px 20px;
+      padding: 16px 20px 6px;
       font-weight: 600;
       font-size: 18px;
     }
     header .count { color: var(--muted); font-weight: 400; margin-left: 8px; }
     .grid {
-      column-count: 4;
-      column-gap: 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      grid-auto-rows: 8px;
+      grid-auto-flow: dense;
+      gap: 12px;
       padding: 0 16px 32px;
     }
-    @media (max-width: 1200px) { .grid { column-count: 3; } }
-    @media (max-width: 900px) { .grid { column-count: 2; } }
-    @media (max-width: 640px) { .grid { column-count: 1; } }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    }
     .card {
-      break-inside: avoid;
-      margin-bottom: 12px;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -47,48 +51,102 @@
       width: 100%;
       height: auto;
     }
-    .empty { padding: 18px; color: var(--muted); }
+    .pager {
+      text-align: center;
+      padding: 0 0 20px;
+    }
+    .load-more {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .load-more:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    .empty { padding: 18px; color: var(--muted); text-align: center; }
   </style>
 </head>
 <body>
-  <header>Downloads Gallery<span class="count">1046 images</span></header>
+  <header>Downloads Gallery<span class="count">0</span></header>
   <section class="grid" id="grid">
     <p class="empty" id="loading">Loading…</p>
   </section>
+  <div class="pager">
+    <button class="load-more" id="loadMore" disabled>Load more</button>
+  </div>
   <script>
+    const PAGE_SIZE = 60;
+    let items = [];
+    let cursor = 0;
+    const gridEl = document.getElementById('grid');
+    const btnEl = document.getElementById('loadMore');
+
+    function setSpan(card, img) {
+      const styles = window.getComputedStyle(gridEl);
+      const rowHeight = parseFloat(styles.gridAutoRows) || 8;
+      const rowGap = parseFloat(styles.rowGap || styles.gap) || 0;
+      const width = card.getBoundingClientRect().width || 240;
+      const ratio = (img.naturalHeight && img.naturalWidth) ? (img.naturalHeight / img.naturalWidth) : 1;
+      const height = width * ratio;
+      const span = Math.max(1, Math.ceil((height + rowGap) / (rowHeight + rowGap)));
+      card.style.gridRowEnd = `span ${span}`;
+    }
+
+    function renderMore() {
+      if (!items.length) return;
+      const end = Math.min(cursor + PAGE_SIZE, items.length);
+      const frag = document.createDocumentFragment();
+      for (let i = cursor; i < end; i++) {
+        const it = items[i];
+        const art = document.createElement('article');
+        art.className = 'card';
+        const a = document.createElement('a');
+        a.href = it.full || it.thumb;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        const img = document.createElement('img');
+        img.loading = 'lazy';
+        img.src = it.thumb;
+        img.alt = '';
+        img.addEventListener('load', () => setSpan(art, img));
+        a.appendChild(img);
+        art.appendChild(a);
+        frag.appendChild(art);
+      }
+      if (cursor === 0) gridEl.innerHTML = '';
+      gridEl.appendChild(frag);
+      cursor = end;
+      if (cursor >= items.length) {
+        btnEl.disabled = true;
+        btnEl.textContent = 'All loaded';
+      } else {
+        btnEl.disabled = false;
+        btnEl.textContent = `Load more (${cursor}/${items.length})`;
+      }
+    }
+
     async function load() {
-      const grid = document.getElementById('grid');
       const loading = document.getElementById('loading');
       try {
         const res = await fetch('meta.json?_=' + Date.now());
         const data = await res.json();
-        const items = data.items || [];
-        const countEl = document.querySelector('.count');
-        countEl.textContent = items.length + ' images';
+        items = data.items || [];
+        document.querySelector('.count').textContent = `${items.length} images`;
         if (loading) loading.remove();
-        const frag = document.createDocumentFragment();
-        for (const it of items) {
-          const art = document.createElement('article');
-          art.className = 'card';
-          const a = document.createElement('a');
-          a.href = it.full;
-          a.target = '_blank';
-          a.rel = 'noopener';
-          const img = document.createElement('img');
-          img.loading = 'lazy';
-          img.src = it.thumb;
-          img.alt = '';
-          a.appendChild(img);
-          art.appendChild(a);
-          frag.appendChild(art);
-        }
-        grid.innerHTML = '';
-        grid.appendChild(frag);
+        btnEl.disabled = false;
+        renderMore();
       } catch (e) {
         if (loading) loading.textContent = 'Failed to load gallery.';
         console.error(e);
       }
     }
+
+    btnEl.addEventListener('click', renderMore);
     load();
   </script>
 </body>
