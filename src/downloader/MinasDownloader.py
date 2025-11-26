@@ -56,6 +56,8 @@ USER_AGENT = (
 )
 
 API_BASE = "https://minas.mihoyo.com"
+ROW_TIMEOUT_SEC = int(os.getenv("MINAS_ROW_TIMEOUT", "420"))  # per-row timeout to avoid getting stuck
+MAX_ROWS = os.getenv("MINAS_MAX_ROWS")  # optional limit for CI/debug
 
 # --------------------- Utilities ---------------------
 
@@ -411,10 +413,25 @@ def run_batch_from_csv(csv_path: Path, out_dir: Path) -> None:
         return
 
     print(f"[CSV] Loaded {len(rows)} rows from {csv_path}")
+    max_rows = None
+    try:
+        max_rows = int(MAX_ROWS) if MAX_ROWS is not None else None
+    except Exception:
+        max_rows = None
+    row_timeout = ROW_TIMEOUT_SEC if ROW_TIMEOUT_SEC > 0 else None
+
     for idx, row in enumerate(rows, 1):
+        if max_rows is not None and idx > max_rows:
+            print(f"[CSV] Reached MINAS_MAX_ROWS={max_rows}; stopping early.")
+            break
         try:
-            asyncio.run(_process_csv_row(row, out_root))
+            if row_timeout:
+                asyncio.run(asyncio.wait_for(_process_csv_row(row, out_root), timeout=row_timeout))
+            else:
+                asyncio.run(_process_csv_row(row, out_root))
             print(f"[CSV] ({idx}/{len(rows)}) done")
+        except asyncio.TimeoutError:
+            print(f"[CSV] ({idx}/{len(rows)}) TIMEOUT after {row_timeout}s; skipping.")
         except KeyboardInterrupt:
             print("\n[CSV] Aborted by user.")
             break
