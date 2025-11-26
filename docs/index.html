@@ -26,23 +26,25 @@
     }
     header .count { color: var(--muted); font-weight: 400; margin-left: 8px; }
     .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      display: flex;
+      flex-wrap: wrap;
       gap: 12px;
       padding: 0 16px 32px;
     }
-    @media (max-width: 900px) {
-      .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
-    }
-    @media (max-width: 640px) {
-      .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-    }
     .card {
+      flex: 1 1 240px;
+      max-width: calc(25% - 12px);
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 10px;
       overflow: hidden;
       box-shadow: 0 10px 30px rgba(0,0,0,.28);
+    }
+    @media (max-width: 900px) {
+      .card { flex-basis: 200px; max-width: calc(33.33% - 12px); }
+    }
+    @media (max-width: 640px) {
+      .card { flex-basis: 150px; max-width: calc(50% - 12px); }
     }
     .card img {
       display: block;
