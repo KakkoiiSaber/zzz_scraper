@@ -238,40 +238,51 @@ async def _zip_current_path(
             waited += 250
 
         # Poll progress if we have the token
+        poll_task = None
         if progress_token:
             last_pct = -1
             progress_url = f"{API_BASE}/api/v2.1/query-zip-progress/?token={progress_token}"
             # Poll until 100% or download finishes
             async def _poll():
                 nonlocal last_pct
-                done = False
-                while not done:
-                    try:
-                        got = await page.evaluate(
-                            "(u)=>fetch(u,{credentials:'same-origin'}).then(r=>r.ok?r.json():null)", progress_url
-                        )
-                    except Exception:
-                        got = None
-                    if not got:
-                        await page.wait_for_timeout(700)
-                        continue
-                    zipped = int(got.get("zipped", got.get("done", 0)) or 0)
-                    total = int(got.get("total", got.get("count", 0)) or 0)
-                    failed = int(got.get("failed", 0) or 0)
-                    canceled = int(got.get("canceled", 0) or 0)
-                    reason = got.get("failed_reason") or got.get("error") or ""
-                    pct = int((zipped * 100) / total) if total else 0
-                    if pct != last_pct:
-                        print(f"  progress: {zipped}/{total} ({pct}%)")
-                        last_pct = pct
-                    if canceled:
-                        print("  progress: canceled by server"); done = True
-                    elif failed:
-                        print(f"  progress: failed ({reason})"); done = True
-                    elif total and zipped >= total:
-                        print("  progress: 100% (zipped) — waiting for download…"); done = True
-                    else:
-                        await page.wait_for_timeout(700)
+                try:
+                    while True:
+                        if page.is_closed():
+                            return
+                        try:
+                            got = await page.evaluate(
+                                "(u)=>fetch(u,{credentials:'same-origin'}).then(r=>r.ok?r.json():null)", progress_url
+                            )
+                        except Exception:
+                            return  # page/context likely closed; exit quietly
+                        if not got:
+                            try:
+                                await page.wait_for_timeout(700)
+                            except Exception:
+                                return
+                            continue
+                        zipped = int(got.get("zipped", got.get("done", 0)) or 0)
+                        total = int(got.get("total", got.get("count", 0)) or 0)
+                        failed = int(got.get("failed", 0) or 0)
+                        canceled = int(got.get("canceled", 0) or 0)
+                        reason = got.get("failed_reason") or got.get("error") or ""
+                        pct = int((zipped * 100) / total) if total else 0
+                        if pct != last_pct:
+                            print(f"  progress: {zipped}/{total} ({pct}%)")
+                            last_pct = pct
+                        if canceled:
+                            print("  progress: canceled by server"); return
+                        elif failed:
+                            print(f"  progress: failed ({reason})"); return
+                        elif total and zipped >= total:
+                            print("  progress: 100% (zipped) — waiting for download…"); return
+                        else:
+                            try:
+                                await page.wait_for_timeout(700)
+                            except Exception:
+                                return
+                except Exception:
+                    return
             # fire-and-forget poller; we’ll still await the actual download
             poll_task = asyncio.create_task(_poll())
         else:
@@ -340,6 +351,13 @@ async def _zip_current_path(
         except Exception as e:
             print(f"Failed to extract zip {dest}: {e}")
 
+        if poll_task:
+            try:
+                await poll_task
+            except Exception:
+                pass
+            if not poll_task.done():
+                poll_task.cancel()
         await context.close()
         await browser.close()
         return dest
